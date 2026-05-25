@@ -1,11 +1,11 @@
 # ---- Base ----
-FROM node:22-alpine AS base
+FROM node:22-slim AS base
 WORKDIR /app
 
 # ---- Dependencies ----
 FROM base AS deps
-# Add build tools in case any dependencies require native compilation (node-gyp)
-RUN apk add --no-cache libc6-compat python3 make g++ 
+# Install build tools via apt-get (Debian) to avoid Alpine network/TLS issues
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package.json package-lock.json ./
@@ -17,9 +17,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 FROM base AS runner
 ENV NODE_ENV=production
 
-# Create non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+# Create non-root user (Debian syntax)
+RUN groupadd -r nodejs && useradd -r -g nodejs nodejs
 
 # Copy built node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules

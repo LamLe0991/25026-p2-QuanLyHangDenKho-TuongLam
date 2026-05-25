@@ -1,8 +1,8 @@
 # ========= BUILD STAGE =========
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 
-# Install build tools for native dependencies (fixes npm ci failures on alpine)
-RUN apk add --no-cache libc6-compat python3 make g++ 
+# Install build tools via apt-get (Debian) to avoid Alpine network/TLS issues
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -22,21 +22,19 @@ COPY . .
 RUN npm run build
 
 # ========= RUN STAGE =========
-FROM node:22-alpine AS runner
+FROM node:22-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+# Create non-root user (Debian syntax)
+RUN groupadd -r nodejs && useradd -r -g nodejs nodejs
 
 # Copy necessary files from builder
 COPY --from=builder /app/public ./public
 
 # Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nodejs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nodejs:nodejs /app/.next/static ./.next/static
 
