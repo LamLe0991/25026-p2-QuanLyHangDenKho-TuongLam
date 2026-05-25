@@ -1,13 +1,21 @@
 # ========= BUILD STAGE =========
 FROM node:22-alpine AS builder
 
+# Install build tools for native dependencies (fixes npm ci failures on alpine)
+RUN apk add --no-cache libc6-compat python3 make g++ 
+
 WORKDIR /app
 
 # Install dependencies
 COPY package*.json ./
 RUN npm ci
 
-# Copy source
+# Accept NEXT_PUBLIC_ variables at build time
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Copy source code
 COPY . .
 
 # Build Next.js
@@ -15,30 +23,24 @@ RUN npm run build
 
 # ========= RUN STAGE =========
 FROM node:22-alpine AS runner
-
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
-
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Copy necessary files from builder
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/next.config.ts ./
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
 
-# Set correct permissions
-RUN chown -R nodejs:nodejs /app
+# Copy necessary files from builder
+COPY --from=builder /app/public ./public
+
+# Automatically leverage output traces to reduce image size
+# https://nextjs.org/docs/advanced-features/output-file-tracing
+COPY --from=builder --chown=nodejs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nodejs:nodejs /app/.next/static ./.next/static
 
 USER nodejs
-
 EXPOSE 3000
 
-# Start the standalone server
 CMD ["node", "server.js"]
