@@ -1,50 +1,103 @@
 #!/bin/sh
 set -e
 
-PORTS="443"
+PORT=443
+INTERFACE=$(ip route | awk '/default/ {print $5}' | head -n1)
+echo "[Docker Firewall] Detected interface: $INTERFACE"
 
 echo "[Docker Firewall] === START ==="
 
 ####################################
-# Ensure iptables rules exist
+# create DOCKER-USER if missing
 ####################################
-echo "[Docker Firewall] Checking iptables rules..."
 
-if ! iptables -C DOCKER-USER -m set --match-set cloudflare src \
-  -p tcp --dport $PORTS -j ACCEPT 2>/dev/null; then
+iptables -nL DOCKER-USER >/dev/null 2>&1 || \
+iptables -N DOCKER-USER
 
-  echo "[Docker Firewall] Adding IPv4 iptables rule..."
-  iptables -I DOCKER-USER -m set --match-set cloudflare src -p tcp --dport $PORTS -j ACCEPT
-fi
-
-if ! ip6tables -C DOCKER-USER -m set --match-set cloudflare6 src \
-  -p tcp --dport $PORTS -j ACCEPT 2>/dev/null; then
-
-  echo "[Docker Firewall] Adding IPv6 iptables rule..."
-  ip6tables -I DOCKER-USER -m set --match-set cloudflare6 src -p tcp --dport $PORTS -j ACCEPT
-fi
+ip6tables -nL DOCKER-USER >/dev/null 2>&1 || \
+ip6tables -N DOCKER-USER
 
 ####################################
-# Ensure drop rules exist
+# Allow established
 ####################################
-if ! iptables -C DOCKER-USER -p tcp --dport $PORTS -j DROP 2>/dev/null; then
-  echo "[Docker Firewall] Adding IPv4 iptables DROP rule..."
-  iptables -A DOCKER-USER -p tcp --dport $PORTS -j DROP
-fi
 
-if ! ip6tables -C DOCKER-USER -p tcp --dport $PORTS -j DROP 2>/dev/null; then
-  echo "[Docker Firewall] Adding IPv6 iptables DROP rule..."
-  ip6tables -A DOCKER-USER -p tcp --dport $PORTS -j DROP
-fi
+iptables -C DOCKER-USER \
+-m conntrack \
+--ctstate ESTABLISHED,RELATED \
+-j ACCEPT 2>/dev/null || \
+
+iptables -I DOCKER-USER \
+-m conntrack \
+--ctstate ESTABLISHED,RELATED \
+-j ACCEPT
+
+
+ip6tables -C DOCKER-USER \
+-m conntrack \
+--ctstate ESTABLISHED,RELATED \
+-j ACCEPT 2>/dev/null || \
+
+ip6tables -I DOCKER-USER \
+-m conntrack \
+--ctstate ESTABLISHED,RELATED \
+-j ACCEPT
 
 ####################################
-# Restart docker safely
+# Allow Cloudflare only
 ####################################
-if command -v docker >/dev/null 2>&1; then
-  echo "[Docker Firewall] Restarting docker..."
-  systemctl restart docker || service docker restart
-else
-  echo "[Docker Firewall] Docker not found. Skipping restart."
-fi
+
+iptables -C DOCKER-USER \
+-i $INTERFACE \
+-m set --match-set cloudflare src \
+-p tcp --dport $PORT \
+-j ACCEPT 2>/dev/null || \
+
+iptables -I DOCKER-USER \
+-i $INTERFACE \
+-m set --match-set cloudflare src \
+-p tcp --dport $PORT \
+-j ACCEPT
+
+
+ip6tables -C DOCKER-USER \
+-i $INTERFACE \
+-m set --match-set cloudflare6 src \
+-p tcp --dport $PORT \
+-j ACCEPT 2>/dev/null || \
+
+ip6tables -I DOCKER-USER \
+-i $INTERFACE \
+-m set --match-set cloudflare6 src \
+-p tcp --dport $PORT \
+-j ACCEPT
+
+####################################
+# Drop others
+####################################
+
+iptables -C DOCKER-USER \
+-i $INTERFACE \
+-p tcp \
+--dport $PORT \
+-j DROP 2>/dev/null || \
+
+iptables -A DOCKER-USER \
+-i $INTERFACE \
+-p tcp \
+--dport $PORT \
+-j DROP
+
+
+ip6tables -C DOCKER-USER \
+-i $INTERFACE \
+-p tcp \
+--dport $PORT \
+-j DROP 2>/dev/null || \
+
+ip6tables -A DOCKER-USER \
+-i $INTERFACE \
+-p tcp \
+--dport $PORT \
+-j DROP
 
 echo "[Docker Firewall] === DONE ==="

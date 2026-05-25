@@ -33,9 +33,14 @@ jobs:
               git clone -b $BRANCH ${{ vars.SSH_PROJECT_URL }} .
             fi
 
+            sudo chmod +x ./scripts/*.sh
+
             echo "[VM Workflow] Install Docker"
             sudo chmod +x ./scripts/setup-docker.sh
             sudo ./scripts/setup-docker.sh
+
+            echo "[VM Workflow] Build image"
+            sudo docker compose build
 
             echo "[VM Workflow] Update Cloudflare firewall"
             sudo chmod +x ./scripts/setup-cloudflare-firewall.sh
@@ -46,4 +51,4 @@ jobs:
             sudo ./scripts/setup-docker-firewall.sh
 
             echo "[VM Workflow] Deploy Docker"
-            sudo docker compose up -d --build
+            sudo docker compose up -d

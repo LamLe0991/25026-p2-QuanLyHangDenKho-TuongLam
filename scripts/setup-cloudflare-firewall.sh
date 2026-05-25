@@ -12,95 +12,108 @@ PORTS="80,443"
 echo "[Cloudflare Firewall] === START ==="
 
 ####################################
-# 1. Check ipset installed
+# Install packages
 ####################################
 if ! command -v ipset >/dev/null 2>&1; then
-  echo "[Cloudflare Firewall] ipset not found. Installing..."
-  apt update
-  apt install -y ipset
+  echo "[Cloudflare Firewall] Installing ipset..."
+
+  if command -v apt >/dev/null; then
+      apt update
+      apt install -y ipset
+  elif command -v dnf >/dev/null; then
+      dnf install -y ipset
+  elif command -v yum >/dev/null; then
+      yum install -y ipset
+  fi
 fi
 
 ####################################
-# 2. Create ipset if not exists
+# Create ipset
 ####################################
-if ! ipset list "$IPSET_V4" >/dev/null 2>&1; then
-  echo "[Cloudflare Firewall] Creating IPv4 ipset..."
-  ipset create "$IPSET_V4" hash:net
-fi
 
-if ! ipset list "$IPSET_V6" >/dev/null 2>&1; then
-  echo "[Cloudflare Firewall] Creating IPv6 ipset..."
-  ipset create "$IPSET_V6" hash:net family inet6
-fi
+ipset list "$IPSET_V4" >/dev/null 2>&1 || \
+ipset create "$IPSET_V4" hash:net
+
+ipset list "$IPSET_V6" >/dev/null 2>&1 || \
+ipset create "$IPSET_V6" hash:net family inet6
 
 ####################################
-# 3. Update ipset entries (no duplicates)
+# Flush old entries
 ####################################
-echo "[Cloudflare Firewall] Updating Cloudflare IPv4 ranges..."
 
-curl -s $CF_IPV4_URL | while read -r ip; do
-  ipset test "$IPSET_V4" "$ip" >/dev/null 2>&1 || ipset add "$IPSET_V4" "$ip"
+ipset flush "$IPSET_V4"
+ipset flush "$IPSET_V6"
+
+####################################
+# Download latest Cloudflare ranges
+####################################
+
+echo "[Cloudflare Firewall] Updating IPv4..."
+
+curl -s "$CF_IPV4_URL" | while read -r ip
+do
+    [ -n "$ip" ] && ipset add "$IPSET_V4" "$ip"
 done
 
-echo "[Cloudflare Firewall] Updating Cloudflare IPv6 ranges..."
+echo "[Cloudflare Firewall] Updating IPv6..."
 
-curl -s $CF_IPV6_URL | while read -r ip; do
-  ipset test "$IPSET_V6" "$ip" >/dev/null 2>&1 || ipset add "$IPSET_V6" "$ip"
+curl -s "$CF_IPV6_URL" | while read -r ip
+do
+    [ -n "$ip" ] && ipset add "$IPSET_V6" "$ip"
 done
 
 ####################################
-# 4. Ensure iptables rules exist
+# INPUT rules
 ####################################
-echo "[Cloudflare Firewall] Checking iptables rules..."
 
-if ! iptables -C INPUT -p tcp -m multiport --dports $PORTS \
-  -m set --match-set "$IPSET_V4" src -j ACCEPT 2>/dev/null; then
+iptables -C INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-m set --match-set cloudflare src \
+-j ACCEPT 2>/dev/null || \
 
-  echo "[Cloudflare Firewall] Adding IPv4 iptables rule..."
-  iptables -I INPUT -p tcp -m multiport --dports $PORTS \
-    -m set --match-set "$IPSET_V4" src -j ACCEPT
-fi
+iptables -I INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-m set --match-set cloudflare src \
+-j ACCEPT
 
 
-if ! ip6tables -C INPUT -p tcp -m multiport --dports $PORTS \
-  -m set --match-set "$IPSET_V6" src -j ACCEPT 2>/dev/null; then
+ip6tables -C INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-m set --match-set cloudflare6 src \
+-j ACCEPT 2>/dev/null || \
 
-  echo "[Cloudflare Firewall] Adding IPv6 iptables rule..."
-  ip6tables -I INPUT -p tcp -m multiport --dports $PORTS \
-    -m set --match-set "$IPSET_V6" src -j ACCEPT
-fi
-
-####################################
-# 5. Ensure drop rules exist
-####################################
-echo "[Cloudflare Firewall] Checking drop rules..."
-
-if ! iptables -C INPUT -p tcp -m multiport --dports $PORTS -j DROP 2>/dev/null; then
-  echo "[Cloudflare Firewall] Adding IPv4 iptables DROP rule..."
-  iptables -A INPUT -p tcp -m multiport --dports $PORTS -j DROP
-fi
-
-if ! ip6tables -C INPUT -p tcp -m multiport --dports $PORTS -j DROP 2>/dev/null; then
-  echo "[Cloudflare Firewall] Adding IPv6 iptables DROP rule..."
-  ip6tables -A INPUT -p tcp -m multiport --dports $PORTS -j DROP
-fi
+ip6tables -I INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-m set --match-set cloudflare6 src \
+-j ACCEPT
 
 ####################################
-# 6. Restart docker safely
+# Drop non-cloudflare
 ####################################
-if command -v docker >/dev/null 2>&1; then
-  echo "[Cloudflare Firewall] Restarting docker..."
-  systemctl restart docker || service docker restart
-else
-  echo "[Cloudflare Firewall] Docker not found. Skipping restart."
-fi
+
+iptables -C INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-j DROP 2>/dev/null || \
+
+iptables -A INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-j DROP
+
+
+ip6tables -C INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-j DROP 2>/dev/null || \
+
+ip6tables -A INPUT \
+-p tcp \
+-m multiport --dports $PORTS \
+-j DROP
 
 echo "[Cloudflare Firewall] === DONE ==="
-
-# To check ipset
-# sudo ipset list cloudflare
-# sudo ipset list cloudflare6
-
-# To check iptables
-# sudo iptables -L | grep cloudflare
-# sudo ip6tables -L | grep cloudflare6
