@@ -1,0 +1,3 @@
+ssh -i keys\ssh-key-2026-05-25.key ubuntu@140.245.118.157
+
+ssh -i [file-key-path] [username]@[ip-server] - NO password, via key

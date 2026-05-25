@@ -1,0 +1,49 @@
+name: Build and Deploy VM
+
+on:
+  push:
+    branches:
+      - devops
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Build and Deploy to VM (Oracle Linux) via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ vars.SSH_HOST }}
+          username: ${{ vars.SSH_USER }}
+          port: ${{ vars.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            BRANCH=${{ github.ref_name }}
+
+            if [ -d "${{ vars.SSH_PROJECT_PATH }}" ]; then
+              echo "[VM Workflow] Project exists. Updating branch $BRANCH ..."
+              cd ${{ vars.SSH_PROJECT_PATH }}
+              git fetch origin $BRANCH
+              git checkout $BRANCH
+              git reset --hard origin/$BRANCH
+            else
+              echo "[VM Workflow] Project not found. Cloning repository..."
+              mkdir -p ${{ vars.SSH_PROJECT_PATH }}
+              cd ${{ vars.SSH_PROJECT_PATH }}
+              git clone -b $BRANCH ${{ vars.SSH_PROJECT_URL }} .
+            fi
+
+            echo "[VM Workflow] Install Docker"
+            sudo chmod +x ./scripts/setup-docker.sh
+            sudo ./scripts/setup-docker.sh
+
+            echo "[VM Workflow] Update Cloudflare firewall"
+            sudo chmod +x ./scripts/setup-cloudflare-firewall.sh
+            sudo ./scripts/setup-cloudflare-firewall.sh
+
+            echo "[VM Workflow] Update Docker firewall"
+            sudo chmod +x ./scripts/setup-docker-firewall.sh
+            sudo ./scripts/setup-docker-firewall.sh
+
+            echo "[VM Workflow] Deploy Docker"
+            sudo docker compose up -d --build
